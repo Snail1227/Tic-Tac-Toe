@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Tic-Tac-Toe</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f4f4f9;
+        }
+        h1 {
+            color: #333;
+        }
+        .board {
+            display: grid;
+            gap: 5px;
+            margin: 20px auto;
+            background-color: #ccc;
+            width: 300px;
+        }
+        .cell {
+            background-color: #fff;
+            border: 1px solid #aaa;
+            width: 60px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+        .cell.taken {
+            pointer-events: none;
+            color: #444;
+        }
+        .players, .session, .board-options {
+            margin-top: 20px;
+        }
+        .players span, .session span, .board-options span {
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        #reset, #createSession, #joinSession, #setBoard, #leaveSession {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        #reset:hover, #createSession:hover, #joinSession:hover, #setBoard:hover, #leaveSession:hover {
+            background-color: #0056b3;
+        }
+        .session-input, .board-options input {
+            margin-top: 10px;
+        }
+        #leaveSession, #sessionPanel {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>Advanced Tic-Tac-Toe</h1>
+    <div id="mainMenu">
+        <button id="showCreateSession">Create Session</button>
+        <button id="showJoinSession">Join Session</button>
+    </div>
+
+    <div id="sessionPanel">
+        <div class="session">
+            <span>Create or Join a Session:</span>
+            <div class="session-input">
+                <input type="text" id="playerName" placeholder="Enter your name">
+                <input type="number" id="playerCount" placeholder="Players (2-4)" min="2" max="4">
+                <button id="createSession">Create Session</button>
+                <button id="joinSession">Join Session</button>
+                <button id="leaveSession">Leave Session</button>
+            </div>
+            <div id="sessionInfo"></div>
+            <div id="existingSessions" style="margin-top: 10px;"></div>
+        </div>
+        <div class="board-options">
+            <span>Choose Board Size:</span>
+            <input type="number" id="boardSizeInput" placeholder="5" min="3" max="10">
+            <button id="setBoard">Set Board</button>
+        </div>
+
+        <div class="players">
+            <span>Players:</span>
+            <div id="playersList"></div>
+            <div id="turn">Turn: Waiting...</div>
+        </div>
+        <div id="board" class="board"></div>
+        <button id="reset">Reset Game</button>
+    
+    </div>
+
+    
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io(); // Connect to the server
+        let boardSize = 5; // Default 5x5 grid
+        const winCondition = 4; // 4 in a row wins
+        let players = [];
+        let currentPlayerIndex = 0;
+        let board = [];
+        let sessionOwner = null;
+        const existingSessions = document.getElementById("existingSessions");
+
+        const boardElement = document.getElementById("board");
+        const turnElement = document.getElementById("turn");
+        const resetButton = document.getElementById("reset");
+        const createSessionButton = document.getElementById("createSession");
+        const joinSessionButton = document.getElementById("joinSession");
+        const leaveSessionButton = document.getElementById("leaveSession");
+        const setBoardButton = document.getElementById("setBoard");
+        const boardSizeInput = document.getElementById("boardSizeInput");
+        const playerNameInput = document.getElementById("playerName");
+        const playerCountInput = document.getElementById("playerCount");
+        const sessionInfo = document.getElementById("sessionInfo");
+        const playersList = document.getElementById("playersList");
+
+        const mainMenu = document.getElementById("mainMenu");
+        const sessionPanel = document.getElementById("sessionPanel");
+        const showCreateSessionButton = document.getElementById("showCreateSession");
+        const showJoinSessionButton = document.getElementById("showJoinSession");
+
+        showCreateSessionButton.addEventListener("click", () => {
+            mainMenu.style.display = "none";
+            sessionPanel.style.display = "block";
+            joinSessionButton.style.display = "none";
+            createSessionButton.style.display = "inline-block";
+        });
+
+        showJoinSessionButton.addEventListener("click", () => {
+            mainMenu.style.display = "none";
+            sessionPanel.style.display = "block";
+            createSessionButton.style.display = "none";
+            joinSessionButton.style.display = "inline-block";
+        });
+
+        function initializeBoard() {
+            board = Array.from({ length: boardSize }, () => Array(boardSize).fill(null));
+            boardElement.style.gridTemplateColumns = `repeat(${boardSize}, 1fr)`;
+            boardElement.style.width = `${boardSize * 60}px`; // Adjust width dynamically
+            boardElement.innerHTML = "";
+
+            for (let row = 0; row < boardSize; row++) {
+                for (let col = 0; col < boardSize; col++) {
+                    const cell = document.createElement("div");
+                    cell.classList.add("cell");
+                    cell.dataset.row = row;
+                    cell.dataset.col = col;
+                    cell.addEventListener("click", handleMove);
+                    boardElement.appendChild(cell);
+                }
+            }
+            updateTurnDisplay();
+        }
+
+        function handleMove(event) {
+            const row = parseInt(event.target.dataset.row);
+            const col = parseInt(event.target.dataset.col);
+            socket.emit("makeMove", { row, col });
+        }
+
+        function createSession() {
+            const playerName = playerNameInput.value.trim();
+            const playerCount = parseInt(playerCountInput.value);
+            if (playerName && playerCount >= 2 && playerCount <= 4) {
+                socket.emit("createSession", { playerName, playerCount });
+                sessionOwner = playerName; // Mark current user as session owner
+            } else {
+                alert("Please enter a valid name and player count between 2 and 4.");
+            }
+        }
+
+        socket.on("sessionCreated", ({ sessionId, players }) => {
+            sessionInfo.textContent = `Session ID: ${sessionId}`;
+            updatePlayersList(players);
+            leaveSessionButton.style.display = "inline-block";
+        });
+
+        function joinSession() {
+            const playerName = playerNameInput.value.trim();
+            const sessionId = prompt("Enter session ID:");
+            if (playerName && sessionId) {
+                socket.emit("joinSession", { sessionId, playerName });
+            }
+        }
+
+        leaveSessionButton.addEventListener("click", () => {
+            socket.emit("leaveSession");
+            mainMenu.style.display = "block";
+            sessionPanel.style.display = "none";
+            leaveSessionButton.style.display = "none";
+            sessionInfo.textContent = "";
+            playersList.innerHTML = "";
+        });
+
+        socket.on("playerJoined", ({ players }) => {
+            updatePlayersList(players);
+        });
+
+        function updatePlayersList(players) {
+            playersList.innerHTML = players.map(player => `<div>${player.name} (${player.symbol})</div>`).join("");
+        }
+
+        createSessionButton.addEventListener("click", createSession);
+        joinSessionButton.addEventListener("click", joinSession);
+        resetButton.addEventListener("click", () => {
+            if (sessionOwner) socket.emit("resetBoard");
+        });
+
+        initializeBoard();
+    </script>
+</body>
+</html>
